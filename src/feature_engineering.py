@@ -10,7 +10,8 @@ class FeatureEngineer:
         
     def create_time_features(self):
         """Create time-based features"""
-        self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
+        self.df['timestamp'] = pd.to_datetime(self.df['timestamp'], utc=True, errors='coerce')
+        self.df = self.df.dropna(subset=['timestamp'])
         
         # Time features
         self.df['hour'] = self.df['timestamp'].dt.hour
@@ -149,7 +150,12 @@ class FeatureEngineer:
     def get_engineered_data(self):
         """Return engineered dataframe and feature list"""
         # Fill any remaining NaN
-        self.df[self.features] = self.df[self.features].fillna(0)
+        # Fill remaining NaN safely (numeric -> 0, categorical/object -> "missing")
+        num_cols = self.df[self.features].select_dtypes(include=["number"]).columns
+        cat_cols = self.df[self.features].select_dtypes(exclude=["number"]).columns
+
+        self.df[num_cols] = self.df[num_cols].fillna(0)
+        self.df[cat_cols] = self.df[cat_cols].astype("object").fillna("missing")
         
         # One-hot encode categorical features
         categorical_features = [f for f in self.features if self.df[f].dtype == 'object']
