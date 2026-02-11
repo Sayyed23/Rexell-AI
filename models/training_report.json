@@ -1,0 +1,10 @@
+{
+    "summary": {
+        "total_models_trained": 3,
+        "best_model": "XGBoost",
+        "best_f1_score": 0.9318181818181818,
+        "training_date": "2026-02-11 20:04:12",
+        "dataset_rows": 9600,
+        "dataset_features": 19653
+    }
+}

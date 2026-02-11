@@ -15,12 +15,30 @@ from sklearn.neural_network import MLPClassifier
 
 import xgboost as xgb
 import lightgbm as lgb
-import catboost as cb
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from pytorch_tabnet.tab_model import TabNetClassifier
+try:
+    import catboost as cb
+    HAS_CATBOOST = True
+except (ImportError, Exception):
+    HAS_CATBOOST = False
+    print("⚠ CatBoost not available (not supported on this Python version)")
+
+try:
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+    HAS_TORCH = True
+except (ImportError, Exception):
+    HAS_TORCH = False
+    print("⚠ PyTorch not available (not supported on this Python version)")
+
+HAS_TABNET = False
+if HAS_TORCH:
+    try:
+        from pytorch_tabnet.tab_model import TabNetClassifier
+        HAS_TABNET = True
+    except (ImportError, Exception):
+        print("⚠ TabNet not available (not supported on this Python version)")
 
 from sklearn.ensemble import VotingClassifier, StackingClassifier
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
@@ -42,43 +60,44 @@ import seaborn as sns
 from tqdm import tqdm
 
 
-# ─── PyTorch Custom Neural Network ───
-class ScalpingDetectorNet(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 128), nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(128, 64), nn.BatchNorm1d(64), nn.ReLU(), nn.Dropout(0.2),
-            nn.Linear(64, 32), nn.ReLU(),
-            nn.Linear(32, 1), nn.Sigmoid()
-        )
+if HAS_TORCH:
+    # ─── PyTorch Custom Neural Network ───
+    class ScalpingDetectorNet(nn.Module):
+        def __init__(self, input_dim):
+            super().__init__()
+            self.network = nn.Sequential(
+                nn.Linear(input_dim, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(0.3),
+                nn.Linear(256, 128), nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(0.3),
+                nn.Linear(128, 64), nn.BatchNorm1d(64), nn.ReLU(), nn.Dropout(0.2),
+                nn.Linear(64, 32), nn.ReLU(),
+                nn.Linear(32, 1), nn.Sigmoid()
+            )
 
-    def forward(self, x):
-        return self.network(x).squeeze(-1)
+        def forward(self, x):
+            return self.network(x).squeeze(-1)
 
 
-# ─── Sklearn-compatible wrapper for the PyTorch model ───
-class PyTorchClassifierWrapper:
-    """Wraps the PyTorch model so it can be stored and evaluated uniformly."""
+    # ─── Sklearn-compatible wrapper for the PyTorch model ───
+    class PyTorchClassifierWrapper:
+        """Wraps the PyTorch model so it can be stored and evaluated uniformly."""
 
-    def __init__(self, net, device):
-        self.net = net
-        self.device = device
+        def __init__(self, net, device):
+            self.net = net
+            self.device = device
 
-    def predict(self, X):
-        self.net.eval()
-        with torch.no_grad():
-            t = torch.FloatTensor(np.asarray(X)).to(self.device)
-            proba = self.net(t).cpu().numpy()
-        return (proba >= 0.5).astype(int)
+        def predict(self, X):
+            self.net.eval()
+            with torch.no_grad():
+                t = torch.FloatTensor(np.asarray(X)).to(self.device)
+                proba = self.net(t).cpu().numpy()
+            return (proba >= 0.5).astype(int)
 
-    def predict_proba(self, X):
-        self.net.eval()
-        with torch.no_grad():
-            t = torch.FloatTensor(np.asarray(X)).to(self.device)
-            p1 = self.net(t).cpu().numpy()
-        return np.column_stack([1 - p1, p1])
+        def predict_proba(self, X):
+            self.net.eval()
+            with torch.no_grad():
+                t = torch.FloatTensor(np.asarray(X)).to(self.device)
+                p1 = self.net(t).cpu().numpy()
+            return np.column_stack([1 - p1, p1])
 
 
 class ModelTrainer:
@@ -92,6 +111,27 @@ class ModelTrainer:
         self.best_model = None
         self.best_model_name = None
         self.best_score = 0
+        self.use_gpu = self._check_gpu_availability()
+
+    def _check_gpu_availability(self):
+        """Checks if an NVIDIA GPU is available for acceleration."""
+        has_gpu = False
+        print("\n🔍 Checking for GPU acceleration...")
+        try:
+            # Check for PyTorch GPU
+            if HAS_TORCH:
+                if torch.cuda.is_available():
+                    print(f"   ✅ PyTorch: GPU detected ({torch.cuda.get_device_name(0)})")
+                    has_gpu = True
+                else:
+                    print("   ❌ PyTorch: GPU not detected")
+            
+            # Check for XGBoost/LightGBM/CatBoost GPU support would require trying to fit a tiny model,
+            # but usually if CUDA is there, they will work.
+        except Exception as e:
+            print(f"   ⚠ Error checking GPU: {e}")
+        
+        return has_gpu
 
     # ──────────────────────────────────────────────
     # DATA LOADING
@@ -167,15 +207,15 @@ class ModelTrainer:
 
         models_dict = {
             'Logistic_Regression': LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42),
-            'Random_Forest': RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1),
+            'Random_Forest': RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=1),
             'Decision_Tree': DecisionTreeClassifier(max_depth=8, random_state=42),
             'Gradient_Boosting_SKL': GradientBoostingClassifier(n_estimators=200, learning_rate=0.1, max_depth=5, random_state=42),
             'AdaBoost': AdaBoostClassifier(n_estimators=100, random_state=42),
-            'Extra_Trees': ExtraTreesClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=-1),
+            'Extra_Trees': ExtraTreesClassifier(n_estimators=200, max_depth=10, random_state=42, n_jobs=1),
             'SVM': SVC(probability=True, random_state=42, class_weight='balanced'),
             'KNN': KNeighborsClassifier(n_neighbors=5),
             'Naive_Bayes': GaussianNB(),
-            'Bagging': BaggingClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+            'Bagging': BaggingClassifier(n_estimators=100, random_state=42, n_jobs=1),
         }
 
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -185,7 +225,7 @@ class ModelTrainer:
             try:
                 # Cross-validation
                 cv_scores = cross_val_score(model, self.X_train_scaled, self.y_train,
-                                           cv=cv, scoring='f1', n_jobs=-1)
+                                           cv=cv, scoring='f1', n_jobs=1)
                 print(f"     5-fold CV F1 scores: {[round(s, 4) for s in cv_scores]}")
 
                 # Full training
@@ -222,7 +262,9 @@ class ModelTrainer:
                     n_estimators=200, learning_rate=0.05, max_depth=6,
                     subsample=0.8, colsample_bytree=0.8, random_state=42,
                     eval_metric='logloss', scale_pos_weight=pos_weight,
-                    verbosity=1
+                    verbosity=1,
+                    tree_method='gpu_hist' if self.use_gpu else 'auto',
+                    gpu_id=0 if self.use_gpu else None
                 ),
                 'use_scaled': True
             },
@@ -230,19 +272,24 @@ class ModelTrainer:
                 'model': lgb.LGBMClassifier(
                     n_estimators=200, learning_rate=0.05, num_leaves=31,
                     max_depth=-1, random_state=42, class_weight='balanced',
-                    n_jobs=-1, verbose=1
+                    n_jobs=1, verbose=1,
+                    device='gpu' if self.use_gpu else 'cpu'
                 ),
                 'use_scaled': True
             },
-            'CatBoost': {
+        }
+
+        if HAS_CATBOOST:
+            boosting_models['CatBoost'] = {
                 'model': cb.CatBoostClassifier(
                     iterations=200, learning_rate=0.05, depth=6,
                     random_seed=42, verbose=20,
-                    auto_class_weights='Balanced'
+                    auto_class_weights='Balanced',
+                    task_type='GPU' if self.use_gpu else 'CPU',
+                    devices='0' if self.use_gpu else None
                 ),
                 'use_scaled': False  # CatBoost handles raw data
             }
-        }
 
         for i, (name, info) in enumerate(boosting_models.items(), 1):
             print(f"\n  [{i}/{len(boosting_models)}] Training {name}...")
@@ -317,45 +364,51 @@ class ModelTrainer:
             print(f"  ❌ MLP failed: {e}")
 
         # --- 3b. TabNet with epoch logging ---
-        print("\n  [2/3] Training TabNet...")
-        try:
-            tabnet = TabNetClassifier(
-                n_d=8, n_a=8, n_steps=3, gamma=1.3, lambda_sparse=1e-3,
-                optimizer_fn=torch.optim.Adam,
-                optimizer_params=dict(lr=2e-2),
-                mask_type='entmax',
-                scheduler_params={"step_size": 10, "gamma": 0.9},
-                scheduler_fn=torch.optim.lr_scheduler.StepLR,
-                verbose=1, seed=42
-            )
-            start = time.time()
-            tabnet.fit(
-                self.X_train_scaled, self.y_train.values,
-                eval_set=[(self.X_test_scaled, self.y_test.values)],
-                eval_metric=['auc', 'accuracy'],
-                max_epochs=min(epochs, 100), patience=patience,
-                batch_size=1024, virtual_batch_size=128
-            )
-            train_time = time.time() - start
+        if HAS_TABNET:
+            print("\n  [2/3] Training TabNet...")
+            try:
+                tabnet = TabNetClassifier(
+                    n_d=8, n_a=8, n_steps=3, gamma=1.3, lambda_sparse=1e-3,
+                    optimizer_fn=torch.optim.Adam,
+                    optimizer_params=dict(lr=2e-2),
+                    mask_type='entmax',
+                    scheduler_params={"step_size": 10, "gamma": 0.9},
+                    scheduler_fn=torch.optim.lr_scheduler.StepLR,
+                    verbose=1, seed=42
+                )
+                start = time.time()
+                tabnet.fit(
+                    self.X_train_scaled, self.y_train.values,
+                    eval_set=[(self.X_test_scaled, self.y_test.values)],
+                    eval_metric=['auc', 'accuracy'],
+                    max_epochs=min(epochs, 100), patience=patience,
+                    batch_size=1024, virtual_batch_size=128
+                )
+                train_time = time.time() - start
 
-            print(f"\n     TabNet best epoch: {tabnet.best_epoch if hasattr(tabnet, 'best_epoch') else 'N/A'}")
+                print(f"\n     TabNet best epoch: {tabnet.best_epoch if hasattr(tabnet, 'best_epoch') else 'N/A'}")
 
-            y_pred = tabnet.predict(self.X_test_scaled)
-            y_proba = tabnet.predict_proba(self.X_test_scaled)[:, 1]
+                y_pred = tabnet.predict(self.X_test_scaled)
+                y_proba = tabnet.predict_proba(self.X_test_scaled)[:, 1]
 
-            self.models['TabNet'] = tabnet
-            metrics = self._calculate_metrics(self.y_test, y_pred, y_proba)
-            self._log_model_result('TabNet', 'Deep_Learning', metrics, train_time)
+                self.models['TabNet'] = tabnet
+                metrics = self._calculate_metrics(self.y_test, y_pred, y_proba)
+                self._log_model_result('TabNet', 'Deep_Learning', metrics, train_time)
 
-        except Exception as e:
-            print(f"  ❌ TabNet failed: {e}")
+            except Exception as e:
+                print(f"  ❌ TabNet failed: {e}")
+        else:
+            print("\n  [2/3] Skipping TabNet (not available)")
 
         # --- 3c. Custom PyTorch NN with full epoch-by-epoch logging ---
-        print("\n  [3/3] Training PyTorch Neural Network...")
-        try:
-            self._train_pytorch_nn(epochs=epochs, batch_size=batch_size, lr=lr, patience=patience)
-        except Exception as e:
-            print(f"  ❌ PyTorch NN failed: {e}")
+        if HAS_TORCH:
+            print("\n  [3/3] Training PyTorch Neural Network...")
+            try:
+                self._train_pytorch_nn(epochs=epochs, batch_size=batch_size, lr=lr, patience=patience)
+            except Exception as e:
+                print(f"  ❌ PyTorch NN failed: {e}")
+        else:
+            print("\n  [3/3] Skipping PyTorch NN (not available)")
 
         dl_count = sum(1 for r in self.results if r['Category'] == 'Deep_Learning')
         print(f"\n  📋 Deep learning models completed: {dl_count}/3")
@@ -478,7 +531,7 @@ class ModelTrainer:
         # Voting Classifier
         print("\n  [1/2] Training Voting Classifier...")
         try:
-            voting = VotingClassifier(estimators=estimators, voting='soft', n_jobs=-1)
+            voting = VotingClassifier(estimators=estimators, voting='soft', n_jobs=1)
             start = time.time()
             voting.fit(self.X_train_scaled, self.y_train)
             t = time.time() - start
@@ -495,7 +548,7 @@ class ModelTrainer:
         print("\n  [2/2] Training Stacking Classifier...")
         try:
             stacking = StackingClassifier(
-                estimators=estimators, final_estimator=LogisticRegression(), cv=5, n_jobs=-1)
+                estimators=estimators, final_estimator=LogisticRegression(), cv=5, n_jobs=1)
             start = time.time()
             stacking.fit(self.X_train_scaled, self.y_train)
             t = time.time() - start
