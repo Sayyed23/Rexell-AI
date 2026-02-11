@@ -1,0 +1,27 @@
+# config/config.yaml
+data:
+  raw_data_path: "data/blockchain_ticketing_master.csv"
+  processed_data_path: "data/processed/cleaned_data.csv"
+  engineered_data_path: "data/processed/engineered_data.csv"
+  
+training:
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 5
+  
+models:
+  traditional: ['LogisticRegression', 'RandomForest', 'DecisionTree', 'SVM']
+  boosting: ['XGBoost', 'LightGBM', 'CatBoost']
+  deep_learning: ['NeuralNetwork', 'TabNet']
+  ensemble: ['VotingClassifier', 'StackingClassifier']
+  
+hyperparameters:
+  xgboost:
+    n_estimators: [100, 200, 300]
+    learning_rate: [0.01, 0.05, 0.1]
+    max_depth: [3, 6, 9]
+  
+output:
+  models_dir: "models/"
+  results_dir: "results/"
+  visualizations_dir: "results/visualizations/"
