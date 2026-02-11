@@ -10,10 +10,22 @@ training:
   cv_folds: 5
   
 models:
-  traditional: ['LogisticRegression', 'RandomForest', 'DecisionTree', 'SVM']
-  boosting: ['XGBoost', 'LightGBM', 'CatBoost']
-  deep_learning: ['NeuralNetwork', 'TabNet']
-  ensemble: ['VotingClassifier', 'StackingClassifier']
+  traditional:
+    enabled: true
+    list: ['LogisticRegression', 'RandomForest', 'DecisionTree', 'SVM', 'KNN', 'NaiveBayes', 'AdaBoost', 'GradientBoosting']
+  boosting:
+    enabled: true
+    list: ['XGBoost', 'LightGBM', 'CatBoost']
+  deep_learning:
+    enabled: true
+    list: ['NeuralNetwork_MLP', 'TabNet', 'PyTorch_NN']
+    epochs: 100
+    batch_size: 64
+    learning_rate: 0.001
+    early_stopping_patience: 15
+  ensemble:
+    enabled: true
+    list: ['VotingClassifier', 'StackingClassifier']
   
 hyperparameters:
   xgboost:

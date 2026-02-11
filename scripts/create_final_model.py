@@ -123,12 +123,13 @@ class FinalModelSelector:
         
         # Create performance visualization
         self._create_performance_visualization(y_test, y_pred, y_pred_proba, 
-                                              metrics, output_path.replace('.pkl', '_performance.png'))
+                                              metrics, output_path.replace('.pkl', '_performance.png'),
+                                              model=model, feature_names=feature_names)
         
         return model_package
     
     def _create_performance_visualization(self, y_test, y_pred, y_pred_proba, 
-                                         metrics, output_path):
+                                         metrics, output_path, model=None, feature_names=None):
         """Create performance visualization"""
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
@@ -160,15 +161,20 @@ class FinalModelSelector:
             axes[1, 0].grid(True, alpha=0.3)
         
         # 4. Feature Importance (if available)
-        if hasattr(self.best_model, 'feature_importances_'):
-            feature_importance = self.best_model.feature_importances_
+        if model is not None and hasattr(model, 'feature_importances_'):
+            feature_importance = model.feature_importances_
             top_features = np.argsort(feature_importance)[-10:]  # Top 10 features
             
             axes[1, 1].barh(range(len(top_features)), feature_importance[top_features])
             axes[1, 1].set_yticks(range(len(top_features)))
-            axes[1, 1].set_yticklabels([self.feature_names[i] for i in top_features])
+            if feature_names is not None:
+                axes[1, 1].set_yticklabels([feature_names[i] for i in top_features])
             axes[1, 1].set_xlabel('Importance')
             axes[1, 1].set_title('Top 10 Feature Importance')
+        else:
+            axes[1, 1].text(0.5, 0.5, 'Feature importance\nnot available', 
+                           ha='center', va='center', fontsize=12)
+            axes[1, 1].set_title('Feature Importance')
         
         plt.suptitle('Final Model Performance Summary', fontsize=16, fontweight='bold')
         plt.tight_layout()

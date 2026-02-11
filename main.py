@@ -23,7 +23,7 @@ def main():
     directories = [
         'data/processed',
         'models/traditional',
-        'models/boosting',
+        'models/gradient_boosting',
         'models/deep_learning',
         'models/ensemble',
         'models/best_model',
@@ -73,16 +73,22 @@ def main():
     )
     
     # Train models based on config
-    if config['models']['traditional']:
+    if config['models']['traditional'].get('enabled', True):
         trainer.train_traditional_models()
     
-    if config['models']['boosting']:
+    if config['models']['boosting'].get('enabled', True):
         trainer.train_gradient_boosting_models()
     
-    if config['models']['deep_learning']:
-        trainer.train_deep_learning_models()
+    dl_cfg = config['models']['deep_learning']
+    if dl_cfg.get('enabled', True):
+        trainer.train_deep_learning_models(
+            epochs=dl_cfg.get('epochs', 100),
+            batch_size=dl_cfg.get('batch_size', 64),
+            lr=dl_cfg.get('learning_rate', 0.001),
+            patience=dl_cfg.get('early_stopping_patience', 15)
+        )
     
-    if config['models']['ensemble']:
+    if config['models']['ensemble'].get('enabled', True):
         trainer.train_ensemble_models()
     
     # Analyze and save results
@@ -127,6 +133,8 @@ def main():
             y_test=y_test,
             output_path='models/best_model/scalping_detection_final.pkl'
         )
+    else:
+        print("⚠ No best model found — skipping final model package")
     
     print_bold("\n" + "="*60)
     print_bold("🎉 PIPELINE EXECUTION COMPLETE!")
@@ -137,8 +145,9 @@ def main():
     print(f"• Data processed: {df_cleaned.shape[0]} transactions")
     print(f"• Features created: {len(features)}")
     print(f"• Models trained: {len(trainer.models)}")
-    print(f"• Best model: {best_model_name}")
-    print(f"• Final model saved: models/best_model/scalping_detection_final.pkl")
+    print(f"• Best model: {best_model_name or 'None'}")
+    if best_model:
+        print(f"• Final model saved: models/best_model/scalping_detection_final.pkl")
     
     # Next steps
     print_bold("\n📌 NEXT STEPS:")
